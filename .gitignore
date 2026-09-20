@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+.DS_Store
+THEORY_GUIDE.md
+
+# Cached network downloads are regenerable with `python run_analysis.py
+# --refresh-data`, but they are kept in the repo by default so the study is
+# reproducible offline and byte-for-byte. Uncomment to exclude them.
+# data/cache/

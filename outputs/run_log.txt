@@ -1,0 +1,357 @@
+
+==============================================================================
+0. DATA
+==============================================================================
+Sample        : 2007-07-30 -> 2026-09-11  (4758 trading days, both legs present)
+WTI range     : $-37.63 to $145.29
+Brent range   : $19.33 to $146.08
+Negative WTI prints: ['2020-04-20']
+Excluded from ESTIMATION (kept in raw series for plotting): ['2020-04-20']
+
+Futures roll-day diagnostics (continuous front-month artefact):
+  leg  n_roll_days  mean_abs_move_roll  mean_abs_move_other  ratio  median_abs_roll  median_abs_other
+  WTI          230              1.5279               1.2609 1.2117           1.0850            0.8900
+BRENT          230              1.6158               1.1975 1.3493           1.1750            0.8500
+  -> flagged roll days move 21% / 35% more than ordinary days (WTI / Brent). These jumps are a change of CONTRACT, not tradeable
+     P&L, so the backtest zeroes the rolling leg's move and charges a roll cost.
+
+==============================================================================
+1. ESTIMATOR VALIDATION (synthetic data, known ground truth)
+==============================================================================
+==========================================================================
+ESTIMATOR VALIDATION AGAINST SYNTHETIC DATA (known ground truth)
+==========================================================================
+
+[1] OU half-life recovery (n_obs = 756 = one training window)
+ true_half_life  mean_est_half_life  median_est_half_life  bias_pct  mean_est_half_life_euler  euler_bias_pct  std_est  n_invalid_fits
+          5.000               4.927                 4.903    -1.459                     5.282           5.639    0.760               0
+         10.000               9.626                 9.352    -3.740                     9.977          -0.231    1.992               0
+         21.000              19.242                18.632    -8.370                    19.591          -6.709    5.559               0
+         42.000              35.898                33.077   -14.529                    36.246         -13.701   14.303               0
+
+[2] Cointegration recovery on truly cointegrated series
+    true beta               : 0.9000
+    mean estimated beta     : 0.9014  (sd 0.0525)
+    Engle-Granger power     : 100.0% of runs reject 'no coint'
+    Johansen finds rank>=1  : 100.0% of runs
+
+[3/4] Test SIZE on two INDEPENDENT random walks (truth: no cointegration)
+innovations  EG false pos %  Joh r<=0 rej %  Joh r<=1 rej %  Joh says rank=2 %  nominal %
+        iid             5.0           10.25            12.5               4.75        5.0
+      garch             5.5           15.75            14.5               7.50        5.0
+
+[5] Half-life under additive microstructure noise (truth = 30 d)
+ noise_ratio  true_half_life  naive_AR1_half_life  naive_bias_pct  ARp_IRF_half_life  ARp_bias_pct  ARMA11_half_life  ARMA11_bias_pct  n_reps
+       0.000          30.000               25.822         -13.926             25.937       -13.544            24.585          -18.049     150
+       0.250          30.000                7.361         -75.464              6.345       -78.850            25.615          -14.618     150
+       0.500          30.000                2.242         -92.528              0.746       -97.512            23.878          -20.408     150
+       1.000          30.000                0.846         -97.181              0.611       -97.962            23.895          -20.350     150
+       2.000          30.000                0.376         -98.748              0.546       -98.180            23.272          -22.428     150
+  -> a plain AR(1) half-life collapses towards zero once the
+     observed spread carries transient noise. This is why the fold
+     diagnostics also report an ARMA(1,1) half-life.
+
+==============================================================================
+2. FULL-SAMPLE EXPLORATORY ANALYSIS (go/no-go only -- NOT the backtest)
+==============================================================================
+Estimation sample: 4757 obs (2020-04-20 removed)
+
+--- 2a. Unit-root precondition: is each series I(1)? ---
+series        transform   adf_stat    p_value  lags  nobs    cv_5pct  reject_unit_root_5pct
+   WTI            level    -2.8051     0.0575    16  4740    -2.8621                  False
+   WTI first difference   -15.6891     0.0000    15  4740    -2.8621                   True
+ BRENT            level    -2.9146     0.0437    30  4726    -2.8622                   True
+ BRENT first difference   -10.5708     0.0000    29  4726    -2.8622                   True
+  Interpretation: cointegration is only a meaningful claim if each
+  series is I(1). Both first differences reject decisively. The WTI
+  LEVEL does not reject (p=0.058). The Brent level is marginal
+  (p=0.044) -- borderline, and economically implausible as genuine
+  stationarity; we treat both levels as I(1).
+
+--- 2b. Engle-Granger, BOTH directions ---
+specification      alpha       beta         R2  ADF_stat_naive  ADF_p_naive    EG_stat  EG_pvalue  EG_cv_5pct  reject_no_coint_5pct
+  WTI ~ BRENT     2.8790     0.8967     0.9510         -4.0143       0.0001    -4.0143     0.0069     -3.3374                  True
+  BRENT ~ WTI     0.7924     1.0606     0.9510         -3.8243       0.0001    -3.8243     0.0126     -3.3374                  True
+  Both directions reject the null of NO cointegration at 5%.
+  Note the naive ADF p-value is far smaller than the MacKinnon EG
+  p-value (0.00007 vs 0.00685): the naive one is WRONG here because the
+  cointegrating vector was estimated, not known. We act on the EG one.
+
+--- 2c. VAR lag order on the LEVELS (feeds Johansen) ---
+  selected p by criterion: {'aic': 12, 'bic': 2, 'hqic': 3, 'fpe': 12}
+  BIC selects p=2  ->  k_ar_diff = p-1 = 1
+  HQIC selects p=3 ->  k_ar_diff = 2
+  AIC selects p=12, which we do NOT use: AIC is not consistent for
+  lag selection and over-parameterises, which distorts the trace stat.
+
+--- 2d. Johansen trace test (det_order=0, restricted constant, k_ar_diff=1) ---
+hypothesis  trace_stat      cv_90      cv_95      cv_99  reject  margin_pct_of_cv
+      r<=0     32.1666    13.4294    15.4943    19.9349    True          107.6025
+      r<=1      5.7146     2.7055     3.8415     6.6349    True           48.7584
+
+  max-eigenvalue test:
+hypothesis  max_eig_stat      cv_90      cv_95      cv_99  reject
+       r=0       26.4520    12.2971    14.2639    18.5200    True
+       r=1        5.7146     2.7055     3.8415     6.6349    True
+
+  Johansen cointegrating vector (normalised): WTI - 0.8869 x Brent
+
+--- 2e. Johansen robustness across lag lengths ---
+ k_ar_diff   trace_r0    cv95_r0  reject_r0   trace_r1    cv95_r1  reject_r1  margin_r1_pct  rank_mechanical       beta
+         1    32.1666    15.4943       True     5.7146     3.8415       True        48.7584                2     0.8869
+         2    29.0714    15.4943       True     5.3549     3.8415       True        39.3962                2     0.8891
+         3    28.2306    15.4943       True     5.1484     3.8415       True        34.0196                2     0.8892
+         5    27.2933    15.4943       True     5.6901     3.8415       True        48.1228                2     0.8913
+         8    23.2723    15.4943       True     5.1175     3.8415       True        33.2155                2     0.8884
+
+--- 2f. Rank decision (mechanical verdict vs economic sense) ---
+  mechanical trace rank : 2
+  r<=1 margin over cv95 : 48.8% of the critical value
+  levels individually stationary? False
+  Engle-Granger agrees?          True
+  ADOPTED RANK          : 1
+    * Mechanical trace verdict was rank=2, which in a bivariate system implies BOTH price levels are stationary. The level ADF tests fail to reject a unit root for at least one series, so rank=2 is economically incoherent and is overridden to 1.
+
+--- 2g. Ornstein-Uhlenbeck fit on the cointegrating residual ---
+  b (dS on lagged S)    : -0.013321   (t = -5.67, p = 1.51e-08)
+  phi = 1 + b           : 0.986679
+  theta (exact)         : 0.013410 per day
+  theta (Euler approx)  : 0.013321 per day
+  mu (long-run mean)    : -0.0428 $/bbl
+  sigma                 : 0.7840
+  HALF-LIFE (exact)     : 51.69 trading days
+  half-life (Euler)     : 52.03 trading days  <- reported for
+                           contrast only; we use the exact inversion.
+  HALF-LIFE, ARMA(1,1)  : 66.68 days (AR root 0.9897, MA -0.1072)
+    The MA term is negative, i.e. the spread carries transient
+    bid-ask/settlement noise, which biases the AR(1) half-life SHORT.
+
+--- 2h. Rolling half-life (stability of the mean-reversion speed) ---
+  AR(1) rolling half-life: min 3.0  median 13.7  max 561.1 days
+  -> the mean-reversion speed is NOT stable; this is the single
+     strongest argument for re-estimating on every walk-forward fold
+     rather than trusting one full-sample number.
+
+==============================================================================
+3. PURGED WALK-FORWARD BACKTEST
+==============================================================================
+Design: train 756 d | purge 21 d | test 126 d | step 126 d
+Entry |z| > 2.0, exit |z| < 0.5, thresholds held FIXED (not fitted).
+Costs: $0.05/bbl per leg per side, plus $0.05/bbl per leg per roll.
+
+fold  0  train 2007-07-30..2010-08-30  test 2010-09-30..2011-04-01  beta 1.029  HL    7.0  TRADE  trades  1  net  -5.780
+fold  1  train 2008-01-29..2011-03-02  test 2011-04-04..2011-10-12  beta 1.003  HL   24.0  SKIP   trades  0  net  +0.000
+fold  2  train 2008-07-29..2011-09-09  test 2011-10-13..2012-04-17  beta 0.803  HL   41.0  SKIP   trades  0  net  +0.000
+fold  3  train 2009-02-03..2012-03-16  test 2012-04-18..2012-10-19  beta 0.690  HL   33.3  TRADE  trades  0  net  +0.000
+fold  4  train 2009-08-25..2012-09-18  test 2012-10-22..2013-05-01  beta 0.579  HL   23.5  TRADE  trades  1  net  +5.770
+fold  5  train 2010-03-01..2013-04-02  test 2013-05-02..2013-11-06  beta 0.556  HL   26.8  TRADE  trades  1  net  +7.025
+fold  6  train 2010-08-31..2013-10-07  test 2013-11-07..2014-05-15  beta 0.604  HL   45.2  SKIP   trades  0  net  +0.000
+fold  7  train 2011-03-03..2014-04-15  test 2014-05-16..2014-11-12  beta 0.704  HL   55.1  SKIP   trades  0  net  +0.000
+fold  8  train 2011-09-12..2014-10-14  test 2014-11-13..2015-05-15  beta 0.589  HL   44.7  SKIP   trades  0  net  +0.000
+fold  9  train 2012-03-19..2015-04-16  test 2015-05-18..2015-11-12  beta 0.841  HL   56.5  SKIP   trades  0  net  +0.000
+fold 10  train 2012-09-19..2015-10-14  test 2015-11-13..2016-05-16  beta 0.877  HL   50.9  SKIP   trades  0  net  +0.000
+fold 11  train 2013-04-03..2016-04-15  test 2016-05-17..2016-11-15  beta 0.930  HL   16.2  TRADE  trades  0  net  +0.000
+fold 12  train 2013-10-08..2016-10-14  test 2016-11-16..2017-05-18  beta 0.909  HL   15.3  TRADE  trades  0  net  +0.000
+fold 13  train 2014-04-16..2017-04-19  test 2017-05-19..2017-11-15  beta 0.934  HL   11.0  TRADE  trades  0  net  +0.000
+fold 14  train 2014-10-15..2017-10-17  test 2017-11-16..2018-05-18  beta 0.898  HL   13.0  TRADE  trades  0  net  +0.000
+fold 15  train 2015-04-17..2018-04-19  test 2018-05-21..2018-11-15  beta 0.871  HL   11.4  TRADE  trades  3  net  +1.434
+fold 16  train 2015-10-15..2018-10-17  test 2018-11-16..2019-05-21  beta 0.850  HL   12.1  TRADE  trades  1  net  -3.145
+fold 17  train 2016-04-18..2019-04-22  test 2019-05-22..2019-11-18  beta 0.799  HL   23.7  SKIP   trades  0  net  +0.000
+fold 18  train 2016-10-17..2019-10-18  test 2019-11-19..2020-05-20  beta 0.810  HL   24.7  SKIP   trades  0  net  +0.000
+fold 19  train 2017-04-20..2020-04-21  test 2020-05-21..2020-11-17  beta 0.897  HL   28.6  SKIP   trades  0  net  +0.000
+fold 20  train 2017-10-18..2020-10-19  test 2020-11-18..2021-05-20  beta 0.902  HL   19.1  SKIP   trades  0  net  +0.000
+fold 21  train 2018-04-20..2021-04-21  test 2021-05-21..2021-11-17  beta 0.889  HL   21.1  SKIP   trades  0  net  +0.000
+fold 22  train 2018-10-18..2021-10-19  test 2021-11-18..2022-05-19  beta 0.948  HL   35.8  SKIP   trades  0  net  +0.000
+fold 23  train 2019-04-23..2022-04-20  test 2022-05-20..2022-11-17  beta 1.000  HL   17.7  TRADE  trades  5  net  -7.118
+fold 24  train 2019-10-21..2022-10-19  test 2022-11-18..2023-05-22  beta 0.993  HL    8.0  TRADE  trades  1  net  +3.842
+fold 25  train 2020-04-22..2023-04-21  test 2023-05-23..2023-11-20  beta 0.975  HL    8.1  SKIP   trades  0  net  +0.000
+fold 26  train 2020-10-20..2023-10-20  test 2023-11-21..2024-05-22  beta 0.973  HL    8.3  SKIP   trades  0  net  +0.000
+fold 27  train 2021-04-22..2024-04-23  test 2024-05-23..2024-11-20  beta 0.984  HL    8.2  SKIP   trades  0  net  +0.000
+fold 28  train 2021-10-20..2024-10-22  test 2024-11-21..2025-05-23  beta 1.001  HL    6.8  SKIP   trades  0  net  +0.000
+fold 29  train 2022-04-21..2025-04-24  test 2025-05-27..2025-11-20  beta 0.990  HL    6.6  SKIP   trades  0  net  +0.000
+fold 30  train 2022-10-20..2025-10-22  test 2025-11-21..2026-05-26  beta 0.931  HL    9.4  TRADE  trades  6  net +12.102
+
+Folds: 31 total, 13 traded, 18 stood aside.
+Stand-aside reasons:
+    1x  EG p-value 0.893 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.739 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.364 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.497 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.360 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.545 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.427 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.229 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.208 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.709 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.170 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.184 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.537 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.108 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.295 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.413 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.154 > 0.10 (no cointegration in train)
+    1x  EG p-value 0.230 > 0.10 (no cointegration in train)
+
+--------------------------------------------------------------------
+PERFORMANCE: out-of-sample
+--------------------------------------------------------------------
+Period                  : 2010-09-30 -> 2026-05-26  (15.5 years, 3906 trading days)
+Trades                  : 19  (1.2 per year)
+Time in market          : 14.1% of days
+
+P&L ($/bbl of WTI notional)
+  Gross P&L             :   +19.99
+  - transaction costs   :     3.62
+  - futures roll costs  :     2.53
+  = Net P&L             :   +14.13
+  Costs as % of gross   : 30.8%
+
+Risk-adjusted
+  Sharpe (gross)        :  0.260
+  Sharpe (net)          :  0.182   95% CI [-0.322, 0.686]  (SE 0.257)
+  Annualised return     :   0.54%
+  Annualised volatility :   2.97%
+  Max drawdown          : -13.58 $/bbl   (-8.40% of notional)
+    peak 2010-12-23 -> trough 2011-02-16 -> recovery 2013-08-08
+
+Trade statistics
+  Hit rate (net)        :  52.6%
+  Hit rate (gross)      :  52.6%
+  Avg holding period    :  29.0 days  (median 17.0)
+  Mean training half-life: 15.7 days -> holding/half-life = 1.84
+  Avg winning trade     : +3.611 $/bbl
+  Avg losing trade      : -2.274 $/bbl
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------------
+LOOKAHEAD / LEAKAGE AUDIT
+--------------------------------------------------------------------------
+[PASS] Train window ends at least `purge_days` trading days before its own test window begins
+       all 31 folds have exactly 21 purged trading days
+[PASS] Out-of-sample test windows never overlap (no calendar day is counted twice in the stitched track record)
+       31 disjoint test windows covering 2010-09-30 to 2026-05-26
+[PASS] Stitched out-of-sample daily series contains no duplicated dates
+       0 duplicated dates
+[PASS] The 2020-04-20 negative print is masked out of every training window it falls inside
+       appears inside the training span of folds [19, 20, 21, 22, 23, 24] -- and is removed there by the estimation mask, which fit_fold() applies before any estimator runs
+[PASS] Positions are lagged relative to the signal that generated them (no same-bar execution on the bar that produced the signal)
+       position series is target_position shifted forward by 1 day (+ execution_lag)
+--------------------------------------------------------------------------
+
+--- Negative controls: would this harness DETECT leakage? ---
+       mode                                       description  n_trades  sharpe_net   net_pnl  hit_rate
+       none                  clean protocol (reported result)        19       0.182    14.129     0.526
+   no_purge                                 purge gap removed        17       0.071     4.217     0.529
+fit_on_test parameters deliberately fitted ON the test window        39       0.670    33.969     0.615
+  -> Deliberately fitting on the test window raises the net Sharpe
+     from 0.182 to 0.670. The harness is therefore sensitive to
+     leakage, and the clean number is not being flattered by it.
+
+==============================================================================
+4. ROBUSTNESS
+==============================================================================
+--- 4a. Transaction-cost sensitivity ---
+ cost_per_leg_side  sharpe_gross  sharpe_net    net_pnl  total_costs  cost_pct_of_gross
+             0.010         0.260       0.244     18.818        1.231              6.156
+             0.020         0.260       0.229     17.646        2.461             12.312
+             0.050         0.260       0.182     14.129        6.153             30.780
+             0.100         0.260       0.103      8.268       12.306             61.560
+
+--- 4b. Entry/exit threshold sensitivity ---
+  entry_z    exit_z  n_trades  sharpe_net   net_pnl  hit_rate  avg_hold_d
+    1.500     0.000        22       0.216    20.244     0.636      37.136
+    1.500     0.500        23       0.138    13.024     0.609      31.348
+    1.500     1.000        29       0.088     8.484     0.552      21.172
+    2.000     0.000        18       0.247    20.132     0.556      35.056
+    2.000     0.500        19       0.182    14.129     0.526      29.000
+    2.000     1.000        22       0.198    14.382     0.545      19.727
+    2.500     0.000        12       0.348    25.926     0.500      42.000
+    2.500     0.500        12       0.305    22.049     0.500      35.333
+    2.500     1.000        13       0.329    21.997     0.538      25.154
+    3.000     0.000        10       0.219    17.020     0.500      39.300
+    3.000     0.500        10       0.232    17.579     0.500      35.800
+    3.000     1.000        10       0.285    19.297     0.500      26.600
+  The reported base case (2.0 / 0.5) is NOT the best cell here.
+  That is deliberate: the thresholds were fixed a priori, and
+  quoting the argmax of this grid would be an overfit.
+
+--- 4c. Execution-lag sensitivity (how fast must we trade?) ---
+ execution_lag_days  sharpe_net   net_pnl  n_trades
+                  0       0.182    14.129        19
+                  1       0.307    24.549        19
+                  2       0.215    15.663        19
+  lag=0 means we trade at the same settlement that produced the
+  signal; lag=1 delays execution by a full day. A strategy whose
+  edge vanishes at lag=1 is really a microstructure effect.
+
+--- 4c(ii). Futures-roll treatment: the two bounds ---
+ roll_mode                                             treatment  sharpe_net   net_pnl    max_dd  hit_rate
+neutralise book nothing on roll days (conservative, biased DOWN)       0.182    14.129   -13.585     0.526
+     naive     book the observed jump (ignores rolls, biased UP)       0.575    65.688   -16.478     0.895
+  A continuous front-month series cannot separate a genuine price
+  move on a roll day from the contract-switch gap. These are the
+  bounds; the truth is between them. We report the conservative
+  end as the headline because over-claiming is the worse error.
+
+--- 4d. Specification sensitivity ---
+                            specification  folds_traded  n_trades  sharpe_net   net_pnl    max_dd
+base (AIC lag, exclude 04-20, 756d train)            13        19       0.182    14.129   -13.585
+                   EG lag selection = BIC            18        20       0.211    15.979   -13.585
+                EG gate p<0.05 (stricter)            10        17       0.008     1.335   -15.013
+                 EG gate p<1.00 (no gate)            31        29      -0.037    16.794   -67.084
+                  also exclude 2020-04-21            13        19       0.182    14.115   -13.585
+                  train window = 504 days            14        22       0.033     1.021   -17.143
+                 train window = 1008 days            16        12      -0.030    25.709   -61.111
+                       purge gap = 0 days            13        17       0.071     4.217   -17.099
+                      purge gap = 42 days            13        18       0.094     7.963   -15.200
+
+==============================================================================
+5. CASE STUDY: THE 2022 BRENT-WTI DISLOCATION
+==============================================================================
+Raw WTI-Brent differential, Oct 2021 - Dec 2022:
+   start (2021-10-01 area) : -3.40 $/bbl
+   widest (most negative)  : -11.39 $/bbl on 2022-07-29
+   year-end 2022           : -5.65 $/bbl
+
+What happened economically:
+  Russia's invasion of Ukraine in Feb 2022 repriced WATERBORNE crude.
+  Brent is the seaborne benchmark and absorbed the sanctions risk
+  premium directly; WTI is landlocked at Cushing and only reaches
+  global buyers through Gulf Coast export capacity. The differential
+  therefore widened far beyond the transport-cost band that normally
+  anchors it. Crucially this was a change in the EQUILIBRIUM, not a
+  deviation from it -- exactly the case where a mean-reversion rule
+  is structurally wrong.
+
+How the model handled it:
+  Fold 23 (train 2019-04-23..2022-04-20, test 2022-05-20..2022-11-17):
+    training EG p-value 0.0423 -> gate PASSED, fold traded
+    training half-life  17.7 days, beta 1.000
+    trades in fold 5, net P&L -7.12 $/bbl
+
+  2022 calendar-year out-of-sample P&L: -1.73 $/bbl gross, -3.28 net
+  Trades entered in 2022: 6, of which 3 profitable net
+entry_date  exit_date         side  holding_days  entry_z   exit_z  gross_pnl     cost  net_pnl
+2022-05-23 2022-05-24 short_spread             2    2.245    0.078      0.660    0.150    0.510
+2022-06-01 2022-06-02  long_spread             2   -2.045    1.556      0.290    0.150    0.140
+2022-07-01 2022-07-05  long_spread             2   -2.470    0.332     -0.068    0.150   -0.218
+2022-07-25 2022-10-11  long_spread            56   -2.202   -0.476     -5.170    0.350   -5.520
+2022-10-25 2022-11-17  long_spread            18   -2.288   -2.026     -1.479    0.150   -1.629
+2022-11-21 2022-12-20  long_spread            21   -2.109   -0.115      4.042    0.199    3.842
+
+  The honest lesson: the training window ending April 2022 still
+  contained enough pre-war data to pass the cointegration gate, so
+  the model traded INTO a structural break and lost money doing it.
+  A p-value computed on a 3-year window cannot detect a regime
+  change that happened two months before the window ended. This is
+  the fundamental limitation of the approach, not a tuning problem.
+  Note what DID work: by the following fold the gate had absorbed
+  the new data and the strategy re-adapted rather than compounding
+  the loss.
+
+==============================================================================
+DONE
+==============================================================================
+Figures : C:\Users\atiwa\brent-wti-statarb\outputs\figures
+Tables  : C:\Users\atiwa\brent-wti-statarb\outputs\tables
+Results : C:\Users\atiwa\brent-wti-statarb\outputs\results.json

@@ -1,0 +1,6 @@
+check,passed,detail
+Train window ends at least `purge_days` trading days before its own test window begins,True,all 31 folds have exactly 21 purged trading days
+Out-of-sample test windows never overlap (no calendar day is counted twice in the stitched track record),True,31 disjoint test windows covering 2010-09-30 to 2026-05-26
+Stitched out-of-sample daily series contains no duplicated dates,True,0 duplicated dates
+The 2020-04-20 negative print is masked out of every training window it falls inside,True,"appears inside the training span of folds [19, 20, 21, 22, 23, 24] -- and is removed there by the estimation mask, which fit_fold() applies before any estimator runs"
+Positions are lagged relative to the signal that generated them (no same-bar execution on the bar that produced the signal),True,position series is target_position shifted forward by 1 day (+ execution_lag)
