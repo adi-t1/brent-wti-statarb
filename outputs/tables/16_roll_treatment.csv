@@ -1,0 +1,3 @@
+roll_mode,treatment,sharpe_net,net_pnl,max_dd,hit_rate
+neutralise,"book nothing on roll days (conservative, biased DOWN)",0.18188916321405973,14.129308539384652,-13.584738704610439,0.5263157894736842
+naive,"book the observed jump (ignores rolls, biased UP)",0.575350044461996,65.68833900787335,-16.477806970597126,0.8947368421052632

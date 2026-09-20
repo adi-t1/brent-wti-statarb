@@ -1,0 +1,4 @@
+mode,description,n_trades,sharpe_net,net_pnl,hit_rate
+none,clean protocol (reported result),19,0.18188916321405973,14.129308539384652,0.5263157894736842
+no_purge,purge gap removed,17,0.07144128727525773,4.216975221811655,0.5294117647058824
+fit_on_test,parameters deliberately fitted ON the test window,39,0.6703021844383208,33.96947173083498,0.6153846153846154
